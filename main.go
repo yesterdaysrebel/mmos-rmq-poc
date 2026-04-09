@@ -38,6 +38,7 @@ func main() {
 	errCh := make(chan error, 2)
 	go runHealthServer(cfg.httpAddr, errCh)
 	go consumeMessages(ctx, cfg, errCh)
+	go statusCheckHandler(cfg)
 
 	select {
 	case <-ctx.Done():
@@ -53,6 +54,15 @@ func main() {
 	defer cancel()
 	<-shutdownCtx.Done()
 	log.Println("service stopped")
+}
+
+func statusCheckHandler(cfg config) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"queue":%q,"consumer":%q,"addr":%q}`,
+			cfg.queueName, cfg.consumerName, cfg.httpAddr)
+	}
 }
 
 func runHealthServer(addr string, errCh chan<- error) {
