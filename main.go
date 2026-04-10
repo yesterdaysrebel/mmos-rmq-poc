@@ -148,7 +148,12 @@ func getRMQStatus(cfg config) map[string]interface{} {
 
 func runHealthServer(addr string, cfg config, errCh chan<- error) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]string{
@@ -208,6 +213,9 @@ func runHealthServer(addr string, cfg config, errCh chan<- error) {
 			w.WriteHeader(http.StatusOK)
 		}
 		_ = json.NewEncoder(w).Encode(result)
+	})
+	mux.HandleFunc("/publish/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/publish", http.StatusPermanentRedirect)
 	})
 
 	srv := &http.Server{
