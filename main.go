@@ -88,9 +88,6 @@ func getRMQStatus(cfg config) map[string]interface{} {
 	result["connected"] = true
 	result["messages"] = q.Messages
 	result["consumers"] = q.Consumers
-	result["durable"] = q.Durable
-	result["exclusive"] = q.Exclusive
-	result["autoDelete"] = q.AutoDelete
 
 	return result
 }
