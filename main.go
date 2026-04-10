@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -36,9 +37,8 @@ func main() {
 	defer stop()
 
 	errCh := make(chan error, 2)
-	go runHealthServer(cfg.httpAddr, errCh)
+	go runHealthServer(cfg.httpAddr, cfg, errCh)
 	go consumeMessages(ctx, cfg, errCh)
-	go statusCheckHandler(cfg)
 
 	select {
 	case <-ctx.Done():
@@ -56,20 +56,77 @@ func main() {
 	log.Println("service stopped")
 }
 
-func statusCheckHandler(cfg config) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"queue":%q,"consumer":%q,"addr":%q}`,
-			cfg.queueName, cfg.consumerName, cfg.httpAddr)
+func getRMQStatus(cfg config) map[string]interface{} {
+	result := map[string]interface{}{
+		"queue": cfg.queueName,
+		"connected": false,
+		"messages": 0,
+		"consumers": 0,
+		"error": "",
 	}
+
+	conn, err := amqp.Dial(cfg.rabbitURL)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	defer conn.Close()
+
+	ch, err := conn.Channel()
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	defer ch.Close()
+
+	q, err := ch.QueueInspect(cfg.queueName)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+
+	result["connected"] = true
+	result["messages"] = q.Messages
+	result["consumers"] = q.Consumers
+	result["durable"] = q.Durable
+	result["exclusive"] = q.Exclusive
+	result["autoDelete"] = q.AutoDelete
+
+	return result
 }
 
-func runHealthServer(addr string, errCh chan<- error) {
+func runHealthServer(addr string, cfg config, errCh chan<- error) {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status": "running",
+			"queue": cfg.queueName,
+			"consumer": cfg.consumerName,
+		})
+	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"queue": cfg.queueName,
+			"consumer": cfg.consumerName,
+		})
+	})
+	mux.HandleFunc("/rmq-status", func(w http.ResponseWriter, _ *http.Request) {
+		status := getRMQStatus(cfg)
+		w.Header().Set("Content-Type", "application/json")
+		if status["error"] != "" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+		_ = json.NewEncoder(w).Encode(status)
 	})
 
 	srv := &http.Server{
