@@ -56,6 +56,60 @@ func main() {
 	log.Println("service stopped")
 }
 
+func publishMessage(cfg config, queueName string, body []byte) map[string]interface{} {
+	result := map[string]interface{}{
+		"published": false,
+		"queue": queueName,
+		"bytes": len(body),
+		"error": "",
+	}
+
+	conn, err := amqp.Dial(cfg.rabbitURL)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	defer conn.Close()
+
+	ch, err := conn.Channel()
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	defer ch.Close()
+
+	_, err = ch.QueueDeclare(
+		queueName,
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+
+	err = ch.Publish(
+		"",
+		queueName,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: "text/plain",
+			Body:        body,
+		},
+	)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+
+	result["published"] = true
+	return result
+}
+
 func getRMQStatus(cfg config) map[string]interface{} {
 	result := map[string]interface{}{
 		"queue": cfg.queueName,
@@ -124,6 +178,36 @@ func runHealthServer(addr string, cfg config, errCh chan<- error) {
 			w.WriteHeader(http.StatusOK)
 		}
 		_ = json.NewEncoder(w).Encode(status)
+	})
+	mux.HandleFunc("/publish", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "only POST allowed"})
+			return
+		}
+		
+		var req struct {
+			Queue string `json:"queue"`
+			Body  string `json:"body"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		
+		if req.Queue == "" {
+			req.Queue = cfg.queueName
+		}
+		
+		result := publishMessage(cfg, req.Queue, []byte(req.Body))
+		w.Header().Set("Content-Type", "application/json")
+		if result["error"] != "" {
+			w.WriteHeader(http.StatusInternalServerError)
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+		_ = json.NewEncoder(w).Encode(result)
 	})
 
 	srv := &http.Server{
