@@ -139,6 +139,34 @@ Build image locally:
 docker build -t ghcr.io/glueops/mmos-rmq-poc:dev .
 ```
 
+## Python AMQP publisher
+
+Use the included Python publisher to send a message over AMQPS (Traefik TCP endpoint):
+
+```bash
+pip install -r requirements-publisher.txt
+python publish_amqp.py --message "hello from python"
+```
+
+Default target is:
+
+- Host: `rabbitmq-amqp.apps.infra.glueops.onglueops.com`
+- Port: `443`
+- Queue: `mmos.events`
+
+You can override with flags, for example:
+
+```bash
+python publish_amqp.py \
+	--host rabbitmq-amqp.apps.infra.glueops.onglueops.com \
+	--port 443 \
+	--username mmos \
+	--password mmos-nonprod-pass \
+	--vhost / \
+	--queue mmos.events \
+	--message "hello over amqp"
+```
+
 ## CI/CD
 
 Workflow: [mmos-rmq-poc/.github/workflows/container-ghcr.yml](mmos-rmq-poc/.github/workflows/container-ghcr.yml)
