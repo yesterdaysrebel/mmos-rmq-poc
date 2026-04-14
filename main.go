@@ -60,7 +60,7 @@ func publishMessage(cfg config, queueName string, body []byte) map[string]interf
 	result := map[string]interface{}{
 		"published": false,
 		"queue": queueName,
-		"byt§es": len(body),
+		"bytes": len(body),
 		"error": "",
 	}
 
@@ -146,6 +146,93 @@ func getRMQStatus(cfg config) map[string]interface{} {
 	return result
 }
 
+func consumeOneMessage(cfg config, queueName string, requeue bool) map[string]interface{} {
+	result := map[string]interface{}{
+		"queue": queueName,
+		"connected": false,
+		"message_found": false,
+		"requeue": requeue,
+		"payload": "",
+		"bytes": 0,
+		"routing_key": "",
+		"messages_before": 0,
+		"messages_after": 0,
+		"consumers": 0,
+		"error": "",
+	}
+
+	conn, err := amqp.Dial(cfg.rabbitURL)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	defer conn.Close()
+
+	ch, err := conn.Channel()
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	defer ch.Close()
+
+	_, err = ch.QueueDeclare(
+		queueName,
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+
+	before, err := ch.QueueInspect(queueName)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+
+	result["connected"] = true
+	result["messages_before"] = before.Messages
+	result["consumers"] = before.Consumers
+
+	msg, ok, err := ch.Get(queueName, false)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+
+	if ok {
+		result["message_found"] = true
+		result["payload"] = string(msg.Body)
+		result["bytes"] = len(msg.Body)
+		result["routing_key"] = msg.RoutingKey
+
+		if requeue {
+			if err := msg.Nack(false, true); err != nil {
+				result["error"] = err.Error()
+				return result
+			}
+		} else {
+			if err := msg.Ack(false); err != nil {
+				result["error"] = err.Error()
+				return result
+			}
+		}
+	}
+
+	after, err := ch.QueueInspect(queueName)
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+
+	result["messages_after"] = after.Messages
+	return result
+}
+
 func runHealthServer(addr string, cfg config, errCh chan<- error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -216,6 +303,46 @@ func runHealthServer(addr string, cfg config, errCh chan<- error) {
 	})
 	mux.HandleFunc("/publish/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/publish", http.StatusPermanentRedirect)
+	})
+	mux.HandleFunc("/consume", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "only POST allowed"})
+			return
+		}
+
+		var req struct {
+			Queue   string `json:"queue"`
+			Requeue *bool  `json:"requeue"`
+		}
+		if r.ContentLength > 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+				return
+			}
+		}
+
+		if req.Queue == "" {
+			req.Queue = cfg.queueName
+		}
+
+		requeue := true
+		if req.Requeue != nil {
+			requeue = *req.Requeue
+		}
+
+		result := consumeOneMessage(cfg, req.Queue, requeue)
+		w.Header().Set("Content-Type", "application/json")
+		if result["error"] != "" {
+			w.WriteHeader(http.StatusInternalServerError)
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+		_ = json.NewEncoder(w).Encode(result)
+	})
+	mux.HandleFunc("/consume/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/consume", http.StatusPermanentRedirect)
 	})
 
 	srv := &http.Server{
