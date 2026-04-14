@@ -60,7 +60,7 @@ func publishMessage(cfg config, queueName string, body []byte) map[string]interf
 	result := map[string]interface{}{
 		"published": false,
 		"queue": queueName,
-		"bytes": len(body),
+		"byt§es": len(body),
 		"error": "",
 	}
 
