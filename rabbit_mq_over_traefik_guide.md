@@ -247,3 +247,95 @@ curl -X POST "http://localhost:8080/consume" \
 6. `/consume` always returns `message_found: false`
 - Cause: active background consumer drains messages immediately.
 - Fix: publish and consume quickly, or temporarily stop/scale down background consumer when inspecting backlog.
+
+## 10. Run commands from RabbitMQ pod (Argo CD)
+
+Use this section when customers want to validate RabbitMQ directly from inside the cluster.
+
+### 10.1 Open a shell in the RabbitMQ pod
+
+From Argo CD:
+1. Open the RabbitMQ application.
+2. Select the running RabbitMQ pod.
+3. Open Terminal/Exec in the pod.
+
+### 10.2 Set variables once (recommended)
+
+Run this once in the pod shell, then reuse in commands below:
+
+```bash
+export RMQ_USER='<RABBITMQ_USER>'
+export RMQ_PASS='<RABBITMQ_PASS>'
+export RMQ_VHOST='<RABBITMQ_VHOST>'
+export RMQ_QUEUE='<QUEUE_NAME>'
+export RMQ_MGMT_HOST='localhost'
+export RMQ_MGMT_PORT='15672'
+```
+
+Then command format becomes shorter, for example:
+
+```bash
+rabbitmqadmin --host="$RMQ_MGMT_HOST" --port="$RMQ_MGMT_PORT" --username="$RMQ_USER" --password="$RMQ_PASS" --vhost="$RMQ_VHOST" list queues name messages consumers
+```
+
+### 10.3 Basic health and runtime checks
+
+```bash
+rabbitmq-diagnostics check_running
+rabbitmq-diagnostics ping
+rabbitmqctl status
+```
+
+### 10.4 Users, vhosts, permissions
+
+```bash
+rabbitmqctl list_users
+rabbitmqctl list_vhosts
+rabbitmqctl list_permissions -p <RABBITMQ_VHOST>
+```
+
+### 10.5 Queue and channel visibility
+
+```bash
+rabbitmqctl list_queues name durable messages messages_ready messages_unacknowledged consumers
+rabbitmqctl list_connections name peer_host peer_port state user vhost
+rabbitmqctl list_channels connection consumer_count messages_unacknowledged
+```
+
+### 10.6 Publish and get messages from inside pod
+
+Use `rabbitmqadmin` against local management endpoint in the pod:
+
+```bash
+rabbitmqadmin \
+  --host=localhost \
+  --port=15672 \
+  --username=<RABBITMQ_USER> \
+  --password=<RABBITMQ_PASS> \
+  --vhost=<RABBITMQ_VHOST> \
+  publish exchange=amq.default routing_key=<QUEUE_NAME> payload='hello from pod'
+```
+
+Peek message(s) and keep them in queue:
+
+```bash
+rabbitmqadmin \
+  --host=localhost \
+  --port=15672 \
+  --username=<RABBITMQ_USER> \
+  --password=<RABBITMQ_PASS> \
+  --vhost=<RABBITMQ_VHOST> \
+  get queue=<QUEUE_NAME> ackmode=ack_requeue_true count=5
+```
+
+Consume message(s) destructively:
+
+```bash
+rabbitmqadmin \
+  --host=localhost \
+  --port=15672 \
+  --username=<RABBITMQ_USER> \
+  --password=<RABBITMQ_PASS> \
+  --vhost=<RABBITMQ_VHOST> \
+  get queue=<QUEUE_NAME> ackmode=ack_requeue_false count=5
+```
